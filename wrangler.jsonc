@@ -1,0 +1,29 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "filobook-provider",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-01",
+	"observability": { "enabled": true },
+
+	// Poll the feed every minute. Webhooks are best effort (one attempt, no retries), so this is the fallback.
+	"triggers": { "crons": ["* * * * *"] },
+
+	"vars": {
+		"FILOBOOK_BASE_URL": "https://dapp.filobook.run"
+	},
+
+	// Secrets are not set here. Add them with:
+	//   pnpm exec wrangler secret put FILOBOOK_API_KEY   (fb_live_… from the dapp's API keys page)
+	//   pnpm exec wrangler secret put WEBHOOK_SECRET     (whsec_… printed by scripts/register.mjs)
+	// For `wrangler dev`, copy .dev.vars.example to .dev.vars instead.
+
+	"kv_namespaces": [
+		{
+			// Holds the feed cursor and short-lived "already quoted" markers.
+			// Create it with `pnpm exec wrangler kv namespace create STATE` and paste the id it prints here.
+			// The zeros below are a placeholder so `wrangler deploy --dry-run` works before you do.
+			"binding": "STATE",
+			"id": "00000000000000000000000000000000"
+		}
+	]
+}
