@@ -1,5 +1,7 @@
-# Copy to .dev.vars for `pnpm dev`. Never commit .dev.vars.
+# Copy to .dev.vars for `pnpm dev` (wrangler), or export these for `pnpm dev:node`. Never commit .dev.vars.
 # An API key created in https://dapp.filobook.run (API keys page) by your provider wallet.
 FILOBOOK_API_KEY=fb_live_replace_me
 # The webhook secret printed by scripts/register.mjs.
 WEBHOOK_SECRET=whsec_replace_me
+# Optional: turns on GET|POST /tick for HTTP cron services (send Authorization: Bearer <value>).
+# TICK_SECRET=

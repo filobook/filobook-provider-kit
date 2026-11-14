@@ -5,7 +5,7 @@
 //     --name "Acme Search" \
 //     --endpoint https://api.acme.example/x402/search \
 //     --types web_search,scraping \
-//     --webhook https://filobook-provider.<your-subdomain>.workers.dev/webhook
+//     --webhook https://<where-the-kit-runs>/webhook
 //
 // Node 20+, no dependencies. The API key never leaves this process except in the Authorization header.
 
@@ -22,7 +22,7 @@ Options:
   --name       Provider name shown on FiloBook
   --endpoint   Your x402 endpoint. FiloBook checks it is reachable before a quote counts as verified.
   --types      Comma-separated request types you serve: ${REQUEST_TYPES.join(", ")}
-  --webhook    This Worker's /webhook URL, so FiloBook pushes new orders to it (optional; the cron polls anyway)
+  --webhook    The kit's public /webhook URL, so FiloBook pushes new orders to it (optional; the tick polls anyway)
   --base-url   FiloBook API (default: $FILOBOOK_BASE_URL or https://dapp.filobook.run)
   --help       Show this help
 
@@ -116,7 +116,7 @@ console.log(`${action} provider ${p.id} (${p.name})`);
 console.log(`  endpoint: ${p.endpoint_url}`);
 console.log(`  types:    ${p.types.join(", ")}`);
 console.log(`  active:   ${p.active}`);
-console.log(`  webhook:  ${p.webhook_url ?? "none (the cron still polls the feed every minute)"}`);
+console.log(`  webhook:  ${p.webhook_url ?? "none (the tick still polls the feed every minute)"}`);
 
 if (p.webhook_secret) {
 	console.log(`
@@ -124,9 +124,8 @@ Your webhook signing secret (it is yours; this script does not save it anywhere)
 
   ${p.webhook_secret}
 
-Store it in the Worker (paste it when wrangler asks):
+Give it to the kit as WEBHOOK_SECRET:
 
-  pnpm exec wrangler secret put WEBHOOK_SECRET
-
-For local dev, put it in .dev.vars as WEBHOOK_SECRET=… (that file is git-ignored).`);
+  Cloudflare Workers:  pnpm exec wrangler secret put WEBHOOK_SECRET
+  Node, Bun, Deno:     set WEBHOOK_SECRET=… in the server's environment (for example a .env file you do not commit)`);
 }
