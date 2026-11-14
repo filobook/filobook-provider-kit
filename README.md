@@ -10,10 +10,10 @@ You write your prices in one file. The kit listens for FiloBook's feed webhook, 
 | Node 20+ | `node dist/server.mjs` | JSON file |
 | Bun | `bun dist/server.mjs` | JSON file |
 | Deno 2 | `deno run --allow-net --allow-env --allow-read --allow-write dist/server.mjs` | JSON file |
-| Docker (any VPS or container host) | `docker build` + `docker run` | JSON file on a volume |
+| Docker (any VPS or container host) | `docker run ghcr.io/filobook/filobook-provider-kit` | JSON file on a volume |
 | Your own server or framework | mount `provider.fetch`, call `provider.tick()` | any `Store` you write |
 
-CI runs the test suite, then starts the same `dist/server.mjs` on Node 20, Node 22, Bun and Deno, and builds and starts the Docker image.
+CI runs the test suite, then starts the same `dist/server.mjs` on Node 20, Node 22, Bun and Deno, and builds and starts the Docker image. Releases also publish that image to `ghcr.io/filobook/filobook-provider-kit`.
 
 ## What this kit does not do
 
@@ -37,7 +37,7 @@ CI runs the test suite, then starts the same `dist/server.mjs` on Node 20, Node 
    pnpm install
    ```
 
-2. Edit your price rules in [`src/rules.ts`](src/rules.ts). The values in the file are examples only. Use your own costs.
+2. Edit your price rules in [`src/rules.ts`](src/rules.ts), or for Docker and the standalone server put them in a JSON file (`RULES_FILE`, see [Settings](#settings)). The values in the file are examples only. Use your own costs.
 
    ```ts
    export const RULES: Rules = {
@@ -79,6 +79,17 @@ Every runtime reads the same environment variables.
 | `PORT`, `HOST` | Standalone server only. Default `8787` and `0.0.0.0`. |
 | `STATE_FILE` | Standalone server only. Default `./.filobook-state.json`. |
 | `TICK_INTERVAL_S` | Standalone server only. Seconds between ticks, default `60`. `0` turns the built-in timer off. |
+| `RULES_FILE` | Standalone server and Docker only. Path to a JSON file with your price rules, same shape as `RULES` in `src/rules.ts`. Overrides the compiled rules. |
+| `RULES_JSON` | Same as `RULES_FILE`, with the JSON inline. Wins when both are set. |
+
+A rules file looks like this. A bad file (unknown type, floor above price, not JSON) stops the server at start-up with a `rules.invalid` log line, so it never quotes with wrong prices.
+
+```json
+{
+  "web_search": { "price": "0.04", "floor": "0.025" },
+  "scraping": { "price": "0.08", "floor": "0.05", "undercut": { "step": "0.001" }, "ttl_s": 120 }
+}
+```
 
 ## Deploy
 
@@ -113,11 +124,25 @@ FILOBOOK_API_KEY=fb_live_… WEBHOOK_SECRET=whsec_… node dist/server.mjs
 # or: deno run --allow-net --allow-env --allow-read --allow-write dist/server.mjs
 ```
 
-The server ticks every minute on its own and keeps state in `STATE_FILE`. Put it behind your usual reverse proxy for HTTPS, and keep it running with systemd, pm2 or similar. Rebuild after you change `src/rules.ts`.
+The server ticks every minute on its own and keeps state in `STATE_FILE`. Put it behind your usual reverse proxy for HTTPS, and keep it running with systemd, pm2 or similar. Rebuild after you change `src/rules.ts`, or keep your prices in `RULES_FILE` and just restart.
 
 Run one process per provider. The JSON file is not shared between processes. For several replicas, use a shared store (see [Your own server](#your-own-server-or-framework)).
 
 ### Docker
+
+A prebuilt image for `linux/amd64` and `linux/arm64` is published to GitHub Container Registry on every release:
+
+```sh
+docker run -d --name filobook-provider -p 8787:8787 \
+  -v filobook-state:/data \
+  -v "$PWD/rules.json:/config/rules.json:ro" -e RULES_FILE=/config/rules.json \
+  -e FILOBOOK_API_KEY=fb_live_… -e WEBHOOK_SECRET=whsec_… \
+  ghcr.io/filobook/filobook-provider-kit:latest
+```
+
+Tags: `latest` and each version (`0.3.0`, `0.3`) from releases, `main` from the main branch. Pin a version in production. Put your prices in `rules.json` (see [Settings](#settings)); without `RULES_FILE` or `RULES_JSON` the image uses the example rules from `src/rules.ts`, which are not your costs.
+
+To build your own image instead, with your rules compiled in:
 
 ```sh
 docker build -t filobook-provider .
@@ -125,7 +150,7 @@ docker run -d --name filobook-provider -p 8787:8787 -v filobook-state:/data \
   -e FILOBOOK_API_KEY=fb_live_… -e WEBHOOK_SECRET=whsec_… filobook-provider
 ```
 
-The image runs `dist/server.mjs` on Node as a non-root user and keeps state in `/data/state.json`. Rebuild the image after you change `src/rules.ts`.
+The image runs `dist/server.mjs` on Node as a non-root user and keeps state in `/data/state.json`.
 
 ### Your own server or framework
 
@@ -178,6 +203,7 @@ If a tick is still running when the next one starts, the new one is skipped.
 | `src/runtimes/cloudflare.ts` | Cloudflare Workers entry (KV store, cron trigger). |
 | `src/runtimes/node.ts` | `node:http` server with a tick timer, used by Node, Bun and Deno. |
 | `src/runtimes/file-store.ts` | `FileStore`, a `Store` in one JSON file. |
+| `src/runtimes/rules-file.ts` | Loads `RULES_FILE` / `RULES_JSON` for the standalone server and Docker. |
 | `src/server.ts` | Standalone entry, built to `dist/server.mjs`. |
 | `src/filobook/` | A copy of the SDK pieces the kit needs (see below). |
 
