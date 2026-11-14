@@ -16,4 +16,47 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
-      - run: pnpm exec wrangler deploy --dry-run --outdir dist
+      - run: pnpm exec wrangler deploy --dry-run --outdir .wrangler/dry-run
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with: { name: server, path: dist/server.mjs }
+
+  # The same dist/server.mjs on every runtime the README lists.
+  runtime:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node20, node22, bun, deno]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: server, path: dist }
+      - if: matrix.runtime == 'node20'
+        uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - if: matrix.runtime == 'node22'
+        uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - if: startsWith(matrix.runtime, 'node')
+        run: bash scripts/smoke.sh node dist/server.mjs
+      - if: matrix.runtime == 'bun'
+        run: bash scripts/smoke.sh bun dist/server.mjs
+      - if: matrix.runtime == 'deno'
+        run: bash scripts/smoke.sh deno run --allow-net --allow-env --allow-read --allow-write dist/server.mjs
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t filobook-provider .
+      - run: |
+          docker run -d --name kit -p 8787:8787 -e TICK_INTERVAL_S=0 filobook-provider
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/health && exit 0; sleep 1; done
+          docker logs kit; exit 1
