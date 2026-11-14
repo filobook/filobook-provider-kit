@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signWebhook } from "../src/filobook/webhook";
-import worker, { type Env } from "../src/index";
-import { quotedKey } from "../src/state";
-import { MemoryKV, NOW, TestContext, apiError, fakeApi, order, quoteOk } from "./helpers";
+import { createProvider, type ProviderConfig } from "../src/provider";
+import { quotedKey } from "../src/store";
+import { NOW, TestContext, TestStore, apiError, fakeApi, order, quoteOk } from "./helpers";
 
-/** worker.fetch with a plain Request (tests have no incoming `cf` properties). */
-const hit = (req: Request, env: Env, ctx: ExecutionContext) => worker.fetch(req as Request<unknown, IncomingRequestCfProperties>, env, ctx);
+const hit = (req: Request, config: ProviderConfig, ctx: TestContext) => createProvider(config).fetch(req, { waitUntil: ctx.waitUntil });
 
 const SECRET = "whsec_test_000000000000000000000000000000000000000000";
 const KEY = "fb_live_test";
@@ -13,8 +12,8 @@ const KEY = "fb_live_test";
 function setup(routes: Parameters<typeof fakeApi>[0] = { "POST /v1/orders/:id/quotes": quoteOk() }) {
 	const api = fakeApi(routes);
 	vi.stubGlobal("fetch", api.fetch);
-	const kv = new MemoryKV();
-	const env: Env = { FILOBOOK_API_KEY: KEY, WEBHOOK_SECRET: SECRET, FILOBOOK_BASE_URL: "https://filobook.test", STATE: kv.asKV() };
+	const kv = new TestStore();
+	const env: ProviderConfig = { apiKey: KEY, webhookSecret: SECRET, baseUrl: "https://filobook.test", store: kv };
 	return { api, kv, env };
 }
 
@@ -46,14 +45,14 @@ afterEach(() => {
 describe("GET /health", () => {
 	it("returns ok", async () => {
 		const { env } = setup();
-		const res = await hit(new Request("https://kit.test/health"), env, new TestContext().asCtx());
+		const res = await hit(new Request("https://kit.test/health"), env, new TestContext());
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 	});
 	it("404s unknown paths and 405s wrong methods", async () => {
 		const { env } = setup();
-		expect((await hit(new Request("https://kit.test/nope"), env, new TestContext().asCtx())).status).toBe(404);
-		expect((await hit(new Request("https://kit.test/webhook"), env, new TestContext().asCtx())).status).toBe(405);
+		expect((await hit(new Request("https://kit.test/nope"), env, new TestContext())).status).toBe(404);
+		expect((await hit(new Request("https://kit.test/webhook"), env, new TestContext())).status).toBe(405);
 	});
 });
 
@@ -61,7 +60,7 @@ describe("POST /webhook", () => {
 	it("rejects a bad signature with 401 and does nothing", async () => {
 		const { env, api } = setup();
 		const ctx = new TestContext();
-		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [order()] }, { secret: "whsec_wrong" }), env, ctx.asCtx());
+		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [order()] }, { secret: "whsec_wrong" }), env, ctx);
 		expect(res.status).toBe(401);
 		expect(await res.json()).toEqual({ error: "bad_signature" });
 		await ctx.settle();
@@ -72,7 +71,7 @@ describe("POST /webhook", () => {
 	it("rejects a stale timestamp with 401", async () => {
 		const { env, api } = setup();
 		const old = Math.floor(NOW / 1000) - 301;
-		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [order()] }, { timestamp: old }), env, new TestContext().asCtx());
+		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [order()] }, { timestamp: old }), env, new TestContext());
 		expect(res.status).toBe(401);
 		expect(await res.json()).toEqual({ error: "stale_timestamp" });
 		expect(api.calls).toHaveLength(0);
@@ -81,19 +80,19 @@ describe("POST /webhook", () => {
 	it("rejects a missing signature with 401", async () => {
 		const { env } = setup();
 		const req = new Request("https://kit.test/webhook", { method: "POST", body: "{}" });
-		expect((await hit(req, env, new TestContext().asCtx())).status).toBe(401);
+		expect((await hit(req, env, new TestContext())).status).toBe(401);
 	});
 
 	it("answers 503 when WEBHOOK_SECRET is not set", async () => {
 		const { env } = setup();
-		const res = await hit(await delivery({ event: "test", sent_at: "x", orders: [] }), { ...env, WEBHOOK_SECRET: undefined }, new TestContext().asCtx());
+		const res = await hit(await delivery({ event: "test", sent_at: "x", orders: [] }), { ...env, webhookSecret: undefined }, new TestContext());
 		expect(res.status).toBe(503);
 	});
 
 	it("answers test events with 200 and no API calls", async () => {
 		const { env, api } = setup();
 		const ctx = new TestContext();
-		const res = await hit(await delivery({ event: "test", sent_at: "x", orders: [] }), env, ctx.asCtx());
+		const res = await hit(await delivery({ event: "test", sent_at: "x", orders: [] }), env, ctx);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(ctx.promises).toHaveLength(0);
@@ -106,7 +105,7 @@ describe("POST /webhook", () => {
 		const a = order({ max_price: "0.05" });
 		const b = order({ max_price: "0.03" }); // below the example rule price 0.04: skipped
 		const c = order({ type: "image" }); // no rule for image: skipped
-		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a, b, c] }), env, ctx.asCtx());
+		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a, b, c] }), env, ctx);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true, orders: 3 });
 		expect(ctx.promises).toHaveLength(1);
@@ -126,7 +125,7 @@ describe("POST /webhook", () => {
 		const a = order();
 		for (let i = 0; i < 2; i++) {
 			const ctx = new TestContext();
-			await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a] }), env, ctx.asCtx());
+			await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a] }), env, ctx);
 			await ctx.settle();
 		}
 		expect(api.quotes()).toHaveLength(1);
@@ -136,7 +135,7 @@ describe("POST /webhook", () => {
 		const { env, kv } = setup({ "POST /v1/orders/:id/quotes": apiError(409, "order_not_open") });
 		const ctx = new TestContext();
 		const a = order();
-		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a] }), env, ctx.asCtx());
+		const res = await hit(await delivery({ event: "orders.created", sent_at: "x", orders: [a] }), env, ctx);
 		expect(res.status).toBe(200);
 		await expect(ctx.settle()).resolves.toBeUndefined();
 		expect(await kv.get(quotedKey(a.id))).toBe("order_not_open");

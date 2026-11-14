@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FiloBook } from "../src/filobook/client";
-import worker, { type Env } from "../src/index";
+import { createProvider } from "../src/provider";
 import { pollFeed, type Deps } from "../src/quoter";
 import type { Rules } from "../src/rules";
-import { CURSOR_KEY, quotedKey } from "../src/state";
-import { MemoryKV, NOW, TestContext, apiError, fakeApi, order, quoteOk, type Handler, type Reply } from "./helpers";
+import { CURSOR_KEY, quotedKey } from "../src/store";
+import { TestStore, NOW, apiError, fakeApi, order, quoteOk, type Handler, type Reply } from "./helpers";
 
 const rules: Rules = { web_search: { price: "0.04", floor: "0.025" } };
 const noLog = () => {};
 
 function deps(routes: Record<string, Reply | Handler>, extra: Partial<Deps> = {}) {
 	const api = fakeApi(routes);
-	const kv = new MemoryKV();
-	const d: Deps = { client: new FiloBook({ apiKey: "fb_live_test", baseUrl: "https://filobook.test", fetch: api.fetch }), kv: kv.asKV(), rules, now: () => NOW, log: noLog, ...extra };
+	const kv = new TestStore();
+	const d: Deps = { client: new FiloBook({ apiKey: "fb_live_test", baseUrl: "https://filobook.test", fetch: api.fetch }), store: kv, rules, now: () => NOW, log: noLog, ...extra };
 	return { api, kv, d };
 }
 
@@ -26,41 +26,53 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe("scheduled handler", () => {
-	it("polls the feed, quotes, and saves the cursor", async () => {
-		const a = order();
-		const api = fakeApi({
-			"GET /v1/feed": (c) => (c.query.get("since") ? { body: { orders: [], cursor: c.query.get("since") } } : { body: { orders: [a], cursor: "2026-11-14T11:59:55.000Z" } }),
-			"GET /v1/me/quotes": { body: { quotes: [] } },
-			"POST /v1/orders/:id/quotes": quoteOk(),
-		});
-		vi.stubGlobal("fetch", api.fetch);
-		const kv = new MemoryKV();
-		const env: Env = { FILOBOOK_API_KEY: "fb_live_test", FILOBOOK_BASE_URL: "https://filobook.test", STATE: kv.asKV() };
+describe("provider.tick()", () => {
+	const feedRoutes = (a: ReturnType<typeof order>) => ({
+		"GET /v1/feed": ((c) => (c.query.get("since") ? { body: { orders: [], cursor: c.query.get("since") } } : { body: { orders: [a], cursor: "2026-11-14T11:59:55.000Z" } })) as Handler,
+		"GET /v1/me/quotes": { body: { quotes: [] } },
+		"POST /v1/orders/:id/quotes": quoteOk(),
+	});
 
-		const ctx = new TestContext();
-		await worker.scheduled({ cron: "* * * * *", scheduledTime: NOW, noRetry() {} } as ScheduledController, env, ctx.asCtx());
-		await ctx.settle();
+	it("polls the feed, quotes, and saves the cursor", async () => {
+		const api = fakeApi(feedRoutes(order()));
+		const kv = new TestStore();
+		const provider = createProvider({ apiKey: "fb_live_test", baseUrl: "https://filobook.test", store: kv, fetch: api.fetch, log: noLog });
+
+		await provider.tick();
 		const feeds = api.calls.filter((c) => c.path === "/v1/feed");
 		expect(feeds[0].query.has("since")).toBe(false);
 		expect(api.quotes()).toHaveLength(1);
 		expect(await kv.get(CURSOR_KEY)).toBe("2026-11-14T11:59:55.000Z");
 
-		const ctx2 = new TestContext();
-		await worker.scheduled({ cron: "* * * * *", scheduledTime: NOW, noRetry() {} } as ScheduledController, env, ctx2.asCtx());
-		await ctx2.settle();
+		await provider.tick();
 		const feeds2 = api.calls.filter((c) => c.path === "/v1/feed");
 		expect(feeds2.at(-1)!.query.get("since")).toBe("2026-11-14T11:59:55.000Z");
 		expect(api.quotes()).toHaveLength(1);
 	});
 
-	it("does nothing without FILOBOOK_API_KEY", async () => {
+	it("does nothing without an API key", async () => {
 		const api = fakeApi({});
-		vi.stubGlobal("fetch", api.fetch);
-		const ctx = new TestContext();
-		await worker.scheduled({} as ScheduledController, { STATE: new MemoryKV().asKV() }, ctx.asCtx());
-		await ctx.settle();
+		const provider = createProvider({ store: new TestStore(), fetch: api.fetch, log: noLog });
+		expect(await provider.tick()).toBeNull();
 		expect(api.calls).toHaveLength(0);
+	});
+
+	it("skips a tick while the previous one is still running", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const api = fakeApi({
+			"GET /v1/feed": async () => {
+				await gate;
+				return { body: { orders: [], cursor: null } };
+			},
+			"GET /v1/me/quotes": { body: { quotes: [] } },
+		});
+		const provider = createProvider({ apiKey: "fb_live_test", baseUrl: "https://filobook.test", store: new TestStore(), fetch: api.fetch, log: noLog });
+		const first = provider.tick();
+		expect(await provider.tick()).toBeNull();
+		release();
+		expect(await first).not.toBeNull();
+		expect(await provider.tick()).not.toBeNull();
 	});
 });
 
@@ -69,7 +81,7 @@ describe("pollFeed", () => {
 		const a = order();
 		const b = order();
 		const { api, kv, d } = deps({ "GET /v1/feed": { body: { orders: [a, b], cursor: "c1" } }, "POST /v1/orders/:id/quotes": quoteOk() });
-		await kv.put(quotedKey(a.id), "0.04", { expirationTtl: 600 });
+		await kv.put(quotedKey(a.id), "0.04", { ttlSeconds: 600 });
 		const r = await pollFeed(d);
 		expect(api.quotes().map((c) => c.path)).toEqual([`/v1/orders/${b.id}/quotes`]);
 		expect(r.outcomes[0]).toEqual({ order_id: a.id, action: "skipped", reason: "already_quoted" });
