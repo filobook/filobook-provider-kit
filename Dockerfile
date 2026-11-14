@@ -1,4 +1,6 @@
-# Standalone server image (Node). Build after editing src/rules.ts:
+# Standalone server image (Node). Prebuilt on every release as ghcr.io/filobook/filobook-provider-kit.
+# Pass your prices as a JSON file (RULES_FILE) or inline (RULES_JSON), or build your own image after editing
+# src/rules.ts:
 #   docker build -t filobook-provider .
 #   docker run -d --name filobook-provider -p 8787:8787 -v filobook-state:/data \
 #     -e FILOBOOK_API_KEY=fb_live_… -e WEBHOOK_SECRET=whsec_… filobook-provider
