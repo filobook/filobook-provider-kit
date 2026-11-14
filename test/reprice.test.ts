@@ -3,7 +3,7 @@ import { FiloBook } from "../src/filobook/client";
 import type { Order, Quote } from "../src/filobook/types";
 import { reprice, runCron, type Deps } from "../src/quoter";
 import type { Rules } from "../src/rules";
-import { MemoryKV, NOW, apiError, fakeApi, order, quote, quoteOk, type Handler, type Reply } from "./helpers";
+import { TestStore, NOW, apiError, fakeApi, order, quote, quoteOk, type Handler, type Reply } from "./helpers";
 
 const undercut: Rules = { web_search: { price: "0.04", floor: "0.025", undercut: { step: "0.001" } } };
 
@@ -15,7 +15,7 @@ function setup(state: { orders: Order[]; quotes: Quote[] }, opts: { rules?: Rule
 	});
 	const d: Deps = {
 		client: new FiloBook({ apiKey: "fb_live_test", baseUrl: "https://filobook.test", fetch: api.fetch }),
-		kv: new MemoryKV().asKV(),
+		store: new TestStore(),
 		rules: opts.rules ?? undercut,
 		limits: opts.limits,
 		now: () => NOW,
@@ -165,14 +165,14 @@ describe("runCron", () => {
 			"GET /v1/me/quotes": { body: { quotes: [quote({ order_id: a.id, price: "0.029" })] } },
 			"POST /v1/orders/:id/quotes": quoteOk(),
 		});
-		const d: Deps = { client: new FiloBook({ apiKey: "k", baseUrl: "https://filobook.test", fetch: api.fetch }), kv: new MemoryKV().asKV(), rules: undercut, now: () => NOW, log: () => {} };
+		const d: Deps = { client: new FiloBook({ apiKey: "k", baseUrl: "https://filobook.test", fetch: api.fetch }), store: new TestStore(), rules: undercut, now: () => NOW, log: () => {} };
 		const r = await runCron(d);
 		expect(api.quotes().map((q) => q.body)).toEqual([{ price: "0.029" }]);
 		expect(r.reprice?.outcomes).toEqual([]);
 	});
 
 	it("never throws", async () => {
-		const d: Deps = { client: { feed: () => Promise.reject(new Error("boom")), quote: () => Promise.reject(new Error("boom")), myQuotes: () => Promise.reject(new Error("boom")) }, kv: new MemoryKV().asKV(), rules: undercut, now: () => NOW, log: () => {} };
+		const d: Deps = { client: { feed: () => Promise.reject(new Error("boom")), quote: () => Promise.reject(new Error("boom")), myQuotes: () => Promise.reject(new Error("boom")) }, store: new TestStore(), rules: undercut, now: () => NOW, log: () => {} };
 		await expect(runCron(d)).resolves.toBeDefined();
 	});
 });

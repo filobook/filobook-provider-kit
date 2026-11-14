@@ -35,13 +35,13 @@ export const RULES: Rules = {
 };
 
 /**
- * Caps per run, so one webhook or cron run stays inside the Worker's subrequest budget and under
- * FiloBook's quote rate limit (60 quotes a minute per wallet).
+ * Caps per run, so one webhook or tick stays under FiloBook's quote rate limit (60 quotes a minute per wallet)
+ * and, on Cloudflare Workers, inside the per-invocation subrequest budget.
  */
 export const LIMITS = {
-	/** Most new quotes posted by one webhook delivery or one cron run. */
+	/** Most new quotes posted by one webhook delivery or one tick. */
 	maxQuotesPerRun: 20,
-	/** Most re-quotes posted by one cron run. */
+	/** Most re-quotes posted by one tick. */
 	maxRepricesPerRun: 10,
 };
 

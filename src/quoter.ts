@@ -3,13 +3,13 @@
 import { FiloBookError, type FiloBook } from "./filobook/client";
 import type { Order, Quote, QuoteStatus } from "./filobook/types";
 import { LIMITS, RULES, decide, decideReprice, quoteOptions, type Rule, type Rules } from "./rules";
-import { getCursor, isQuoted, markQuoted, setCursor } from "./state";
+import { getCursor, isQuoted, markQuoted, setCursor, type Store } from "./store";
 
 export type Logger = (event: string, data?: Record<string, unknown>) => void;
 
 export type Deps = {
 	client: Pick<FiloBook, "feed" | "quote" | "myQuotes">;
-	kv: KVNamespace;
+	store: Store;
 	rules?: Rules;
 	limits?: typeof LIMITS;
 	/** Current time in ms. */
@@ -67,7 +67,7 @@ const failedChecks = (q: Quote) => q.verification?.checks?.filter((c) => !c.ok).
 const isOpen = (order: Order, nowMs: number) => order.status === "open" && Date.parse(order.closes_at) > nowMs;
 
 /**
- * Quote on new orders (from a webhook delivery or a feed page). Orders already marked in KV are skipped.
+ * Quote on new orders (from a webhook delivery or a feed page). Orders already marked in the store are skipped.
  * Posts at most `limits.maxQuotesPerRun` quotes; stops at once on rate_limited or an auth problem.
  */
 export async function quoteOrders(orders: Order[], deps: Deps): Promise<RunResult> {
@@ -84,7 +84,7 @@ export async function quoteOrders(orders: Order[], deps: Deps): Promise<RunResul
 			outcomes.push({ order_id: order.id, action: "skipped", reason: "not_open" });
 			continue;
 		}
-		if (await isQuoted(deps.kv, order.id)) {
+		if (await isQuoted(deps.store, order.id)) {
 			outcomes.push({ order_id: order.id, action: "skipped", reason: "already_quoted" });
 			continue;
 		}
@@ -102,11 +102,11 @@ export async function quoteOrders(orders: Order[], deps: Deps): Promise<RunResul
 		const res = await postQuote(deps, order, decision.price, rule!);
 		if (res.kind === "ok") {
 			const failed = failedChecks(res.quote);
-			await markQuoted(deps.kv, order, decision.price, now());
+			await markQuoted(deps.store, order, decision.price, now());
 			outcomes.push({ order_id: order.id, action: "quoted", price: decision.price, status: res.quote.status, ...(failed.length ? { failed_checks: failed } : {}) });
 			log(res.quote.status === "verified" ? "quote.verified" : "quote.not_verified", { order_id: order.id, price: decision.price, status: res.quote.status, failed_checks: failed });
 		} else if (res.kind === "final") {
-			await markQuoted(deps.kv, order, res.code, now());
+			await markQuoted(deps.store, order, res.code, now());
 			outcomes.push({ order_id: order.id, action: "rejected", code: res.code });
 			log("quote.rejected", { order_id: order.id, code: res.code });
 		} else if (res.kind === "stop") {
@@ -129,7 +129,7 @@ export async function quoteOrders(orders: Order[], deps: Deps): Promise<RunResul
  */
 export async function pollFeed(deps: Deps): Promise<RunResult & { cursor: string | null }> {
 	const log = deps.log ?? defaultLog;
-	const since = await getCursor(deps.kv);
+	const since = await getCursor(deps.store);
 	let page: { orders: Order[]; cursor: string | null };
 	try {
 		page = await deps.client.feed(since ? { since } : {});
@@ -142,7 +142,7 @@ export async function pollFeed(deps: Deps): Promise<RunResult & { cursor: string
 	const result = await quoteOrders(page.orders ?? [], deps);
 	let cursor = since;
 	if (!result.incomplete && page.cursor && page.cursor !== since) {
-		await setCursor(deps.kv, page.cursor);
+		await setCursor(deps.store, page.cursor);
 		cursor = page.cursor;
 	}
 	return { ...result, cursor };
@@ -220,7 +220,7 @@ export async function reprice(deps: Deps, exclude: ReadonlySet<string> = new Set
 	return { outcomes, stopped: null, incomplete: false };
 }
 
-/** One cron run: poll the feed, then reprice. Never throws. */
+/** One tick: poll the feed, then reprice. Never throws. */
 export async function runCron(deps: Deps): Promise<{ poll: RunResult; reprice: RunResult | null }> {
 	const log = deps.log ?? defaultLog;
 	try {

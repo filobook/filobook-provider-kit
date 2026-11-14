@@ -1,35 +1,31 @@
-// Test doubles: an in-memory KV, a fake FiloBook API behind a mocked fetch, and an ExecutionContext that
-// collects waitUntil promises.
+// Test doubles: an in-memory store, a fake FiloBook API behind a mocked fetch, and a context that collects
+// waitUntil promises.
 
 import type { Order, Quote } from "../src/filobook/types";
+import type { Store } from "../src/store";
 
-export class MemoryKV {
+/** An in-memory Store that records every put and, like Cloudflare KV, refuses TTLs under 60 seconds. */
+export class TestStore implements Store {
 	store = new Map<string, { value: string; ttl?: number }>();
 	puts: { key: string; value: string; ttl?: number }[] = [];
 	async get(key: string): Promise<string | null> {
 		return this.store.get(key)?.value ?? null;
 	}
-	async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
-		if (opts?.expirationTtl !== undefined && opts.expirationTtl < 60) throw new Error("KV expirationTtl must be at least 60");
-		this.store.set(key, { value, ttl: opts?.expirationTtl });
-		this.puts.push({ key, value, ttl: opts?.expirationTtl });
-	}
-	asKV() {
-		return this as unknown as KVNamespace;
+	async put(key: string, value: string, opts?: { ttlSeconds?: number }): Promise<void> {
+		if (opts?.ttlSeconds !== undefined && opts.ttlSeconds < 60) throw new Error("ttlSeconds must be at least 60");
+		this.store.set(key, { value, ttl: opts?.ttlSeconds });
+		this.puts.push({ key, value, ttl: opts?.ttlSeconds });
 	}
 }
 
+/** Collects the promises handed to waitUntil. */
 export class TestContext {
 	promises: Promise<unknown>[] = [];
-	waitUntil(p: Promise<unknown>) {
+	waitUntil = (p: Promise<unknown>) => {
 		this.promises.push(p);
-	}
-	passThroughOnException() {}
+	};
 	async settle() {
 		await Promise.all(this.promises);
-	}
-	asCtx() {
-		return this as unknown as ExecutionContext;
 	}
 }
 
@@ -88,7 +84,7 @@ export function fakeApi(routes: Record<string, Reply | Handler>) {
 		const re = new RegExp(`^${path.replace(/:[a-z_]+/g, "[^/]+")}$`);
 		return { method, re, reply };
 	});
-	const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+	const fetchMock = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 		const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 		const method = (init?.method ?? "GET").toUpperCase();
 		const headers = new Headers(init?.headers);
