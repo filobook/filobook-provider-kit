@@ -87,7 +87,7 @@ if (args.webhook) fields.webhook_url = httpsUrl(args.webhook, "--webhook");
 async function call(method, path, body) {
 	const res = await fetch(baseUrl + path, {
 		method,
-		headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", accept: "application/json", "user-agent": "filobook-provider-kit/0.2.0" },
+		headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", accept: "application/json", "user-agent": "filobook-provider-kit/0.3.0" },
 		body: body === undefined ? undefined : JSON.stringify(body),
 		signal: AbortSignal.timeout(15_000),
 	});
