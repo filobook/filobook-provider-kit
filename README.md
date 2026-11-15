@@ -18,8 +18,7 @@ CI runs the test suite, then starts the same `dist/server.mjs` on Node 20, Node 
 ## What this kit does not do
 
 - **It only quotes.** It does not serve the x402 calls. Your own x402 endpoint does that.
-- **No funds move on FiloBook yet.** There is no settlement contract. A fill records who won and at what price.
-- **$FILO has not launched.**
+- **It does not handle payment.** When the agent has funded the FiloBook escrow ([`0x5689Cd95D9106C7498D1760058d6b85D8A9F2288`](https://robinhoodchain.blockscout.com/address/0x5689Cd95D9106C7498D1760058d6b85D8A9F2288)), a won fill pays your provider wallet in USDG on Robinhood Chain automatically; the kit does nothing for that. Other fills are recorded in the public ledger only.
 
 ## Prerequisites
 
