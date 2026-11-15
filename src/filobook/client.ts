@@ -4,7 +4,7 @@
 import type { Order, Provider, ProviderMe, Quote, QuoteInput } from "./types";
 
 export const DEFAULT_BASE_URL = "https://dapp.filobook.run";
-export const USER_AGENT = "filobook-provider-kit/0.3.0";
+export const USER_AGENT = "filobook-provider-kit/0.3.1";
 
 /** Any non-2xx answer from the API. `code` is the API's machine-readable error, e.g. "rate_limited". */
 export class FiloBookError extends Error {

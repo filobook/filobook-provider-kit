@@ -139,7 +139,7 @@ docker run -d --name filobook-provider -p 8787:8787 \
   ghcr.io/filobook/filobook-provider-kit:latest
 ```
 
-Tags: `latest` and each version (`0.3.0`, `0.3`) from releases, `main` from the main branch. Pin a version in production. Put your prices in `rules.json` (see [Settings](#settings)); without `RULES_FILE` or `RULES_JSON` the image uses the example rules from `src/rules.ts`, which are not your costs.
+Tags: `latest` and each version (`0.3.1`, `0.3`) from releases, `main` from the main branch. Pin a version in production. Put your prices in `rules.json` (see [Settings](#settings)); without `RULES_FILE` or `RULES_JSON` the image uses the example rules from `src/rules.ts`, which are not your costs.
 
 To build your own image instead, with your rules compiled in:
 
